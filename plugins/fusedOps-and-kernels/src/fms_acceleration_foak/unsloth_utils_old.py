@@ -86,6 +86,9 @@ UNSLOTH_FAST_FORWARDS = [
     ),        
 ]
 
+from .models.llama import rms_layernorm_forward, LlamaRMSNorm
+from .unsloth_utils import patch_forward
+
 # add improvements to a PeftModelForCausalLM
 # - fused ops
 # - rms layer norm
@@ -150,7 +153,19 @@ def add_unsloth_improvements(
                 self_attn.apply_o = _lo
             if mlp is not None and _is_loralayer(mlp):
                 mlp.forward = MethodType(_lmlp, mlp) 
-        layer.forward = MethodType(_decoder_f, layer)
+
+        # layer.forward = MethodType(_decoder_f, layer)
+
+        # NOTE: replace
+        # layer.input_layernorm.forward = MethodType(
+        #     rms_layernorm_forward,
+        #     layer.input_layernorm
+        # )
+        # layer.post_attention_layernorm.forward = MethodType(
+        #     rms_layernorm_forward,
+        #     layer.post_attention_layernorm
+        # )
+        patch_forward(layer, LlamaRMSNorm, rms_layernorm_forward)
 
     backbone = getattr(base_model, _bb_name)
     backbone.forward = MethodType(_bb_f, backbone)
