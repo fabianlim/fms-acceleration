@@ -1,5 +1,6 @@
 from ..unsloth_utils import inject_to_model
 from ..kernels.unsloth.rms_layernorm import fast_rms_layernorm
+from ..kernels.unsloth.cross_entropy_loss import fast_cross_entropy_loss, Fast_CrossEntropyLoss
 import torch
 
 # class RMSLayernorm(torch.nn.Module):
@@ -28,3 +29,20 @@ PATCH = {
         rms_layernorm_forward, LlamaRMSNorm
     )
 }
+
+from torch.nn import CrossEntropyLoss
+
+class FastCrossEntropyLoss(CrossEntropyLoss):
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, input, target):
+        print ('patched ent')
+        # return super().forward(input, target)
+        # return fast_cross_entropy_loss(input, target)
+        loss = Fast_CrossEntropyLoss.apply(
+            input, target
+        )
+        n_items = torch.count_nonzero(target != -100)
+        return loss.sum() / n_items

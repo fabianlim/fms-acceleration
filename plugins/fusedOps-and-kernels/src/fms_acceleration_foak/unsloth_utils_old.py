@@ -87,7 +87,9 @@ UNSLOTH_FAST_FORWARDS = [
 ]
 
 from .models.llama import rms_layernorm_forward, LlamaRMSNorm
-from .unsloth_utils import patch_forward
+from .models.llama import FastCrossEntropyLoss, CrossEntropyLoss
+from .unsloth_utils import patch_forward, patch_target_module
+
 
 # add improvements to a PeftModelForCausalLM
 # - fused ops
@@ -167,7 +169,12 @@ def add_unsloth_improvements(
         # )
         patch_forward(layer, LlamaRMSNorm, rms_layernorm_forward)
 
+    patch_target_module(
+        'torch.nn.CrossEntropyLoss', FastCrossEntropyLoss,
+        'transformers.models.llama.modeling_llama'
+    )
+    # base_model.forward = MethodType(_causal_f, base_model)
+
     backbone = getattr(base_model, _bb_name)
     backbone.forward = MethodType(_bb_f, backbone)
-    base_model.forward = MethodType(_causal_f, base_model)
     return model
