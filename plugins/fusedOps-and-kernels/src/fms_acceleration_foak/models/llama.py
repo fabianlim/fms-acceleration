@@ -47,3 +47,38 @@ class FastCrossEntropyLoss(CrossEntropyLoss):
         )
         n_items = torch.count_nonzero(target != -100)
         return loss.sum() / n_items
+
+from ..fused_ops.unsloth_lora.gptq.fast_lora import apply_lora_qkv
+
+def create_qkv_functions(attn: torch.nn.Module):
+
+    Q = K = V = None
+
+    def _state(X):
+        nonlocal Q, K, V
+        if Q is None and K is None and V is None:
+            # this one assumes inside is q_proj, k_proj, ...
+            Q, K, V = apply_lora_qkv(attn, X)
+
+    def _lin_q(self, X):
+        nonlocal Q
+        _state(X)
+        assert Q is not None, "qkv out of sync"
+        out, Q = Q, None
+        return out
+
+    def _lin_k(self, X):
+        nonlocal K
+        _state(X)
+        assert K is not None, "qkv out of sync"
+        out, K = K, None
+        return out
+
+    def _lin_v(self, X):
+        nonlocal V
+        _state(X)
+        assert V is not None, "qkv out of sync"
+        out, V = V, None
+        return out
+
+    return _lin_q, _lin_k, _lin_v

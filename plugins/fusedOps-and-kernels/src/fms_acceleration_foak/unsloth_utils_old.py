@@ -89,6 +89,7 @@ UNSLOTH_FAST_FORWARDS = [
 from .models.llama import rms_layernorm_forward, LlamaRMSNorm
 from .models.llama import FastCrossEntropyLoss, CrossEntropyLoss
 from .models.llama import fast_rope_embedding
+from .models.llama import create_qkv_functions
 from .unsloth_utils import patch_forward, patch_target_module
 
 
@@ -148,12 +149,18 @@ def add_unsloth_improvements(
         # NOTE: these are not set using MethodType as they called called as
         # func(self, X) in the fast forwards. To be changed later
         # self_attn.apply_qkv = original_apply_qkv
+        for mod, f in zip(
+            [self_attn.q_proj, self_attn.k_proj, self_attn.v_proj],
+            create_qkv_functions(self_attn)
+        ):
+            mod.forward = MethodType(f, mod)
+
         self_attn.apply_o = original_apply_o
         if _is_lora_peft:
             # if all([_is_loralayer(getattr(self_attn, x)) for x in _qkv_names]):
             #     self_attn.apply_qkv = _lqkv
-            if _is_loralayer(getattr(self_attn, _o_name)):
-                self_attn.apply_o = _lo
+            # if _is_loralayer(getattr(self_attn, _o_name)):
+            #     self_attn.apply_o = _lo
             if mlp is not None and _is_loralayer(mlp):
                 mlp.forward = MethodType(_lmlp, mlp) 
 
