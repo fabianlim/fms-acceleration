@@ -137,7 +137,7 @@ def fast_rope_embedding(Q, K, cos, sin):
     return Q, K
 pass
 
-
+# NOTE: Remove this?
 class Slow_RoPE_Embedding(torch.autograd.Function):
     @staticmethod
     def forward(ctx, Q, cos, sin, position_ids):

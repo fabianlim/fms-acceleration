@@ -1,6 +1,7 @@
 from ..unsloth_utils import inject_to_model
 from ..kernels.unsloth.rms_layernorm import fast_rms_layernorm
 from ..kernels.unsloth.cross_entropy_loss import fast_cross_entropy_loss, Fast_CrossEntropyLoss
+from ..kernels.unsloth.rope_embedding import fast_rope_embedding
 import torch
 
 # class RMSLayernorm(torch.nn.Module):

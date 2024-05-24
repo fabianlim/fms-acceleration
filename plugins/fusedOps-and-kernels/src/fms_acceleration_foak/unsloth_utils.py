@@ -39,7 +39,7 @@ import importlib
 def patch_target_module(
     to_patch: str,
     replace_with: Any,
-    target_module: str,
+    target_module: str = None,
 ):
     to_patch = to_patch.split('.')
     assert len(to_patch) > 1, "must have an object to patch"
@@ -49,10 +49,11 @@ def patch_target_module(
     source = importlib.import_module(to_patch)
     original_obj = getattr(source, obj_name_to_patch)
     setattr(source, obj_name_to_patch, replace_with)
-    target_module = importlib.import_module(target_module)
 
-    # reload and this should get the patched object
-    importlib.reload(target_module)
+    if target_module is not None:
+        # reload and this should get the patched object
+        target_module = importlib.import_module(target_module)
+        importlib.reload(target_module)
 
-    # replace it
-    setattr(source, obj_name_to_patch, original_obj)
+        # replace it
+        setattr(source, obj_name_to_patch, original_obj)

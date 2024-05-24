@@ -88,6 +88,7 @@ UNSLOTH_FAST_FORWARDS = [
 
 from .models.llama import rms_layernorm_forward, LlamaRMSNorm
 from .models.llama import FastCrossEntropyLoss, CrossEntropyLoss
+from .models.llama import fast_rope_embedding
 from .unsloth_utils import patch_forward, patch_target_module
 
 
@@ -143,14 +144,14 @@ def add_unsloth_improvements(
 
         self_attn = getattr(layer, _attn_name)
         mlp = None if _mlp_name is None else getattr(layer, _mlp_name)
-        self_attn.forward = MethodType(_attn_f, self_attn)
+        # self_attn.forward = MethodType(_attn_f, self_attn)
         # NOTE: these are not set using MethodType as they called called as
         # func(self, X) in the fast forwards. To be changed later
-        self_attn.apply_qkv = original_apply_qkv
+        # self_attn.apply_qkv = original_apply_qkv
         self_attn.apply_o = original_apply_o
         if _is_lora_peft:
-            if all([_is_loralayer(getattr(self_attn, x)) for x in _qkv_names]):
-                self_attn.apply_qkv = _lqkv
+            # if all([_is_loralayer(getattr(self_attn, x)) for x in _qkv_names]):
+            #     self_attn.apply_qkv = _lqkv
             if _is_loralayer(getattr(self_attn, _o_name)):
                 self_attn.apply_o = _lo
             if mlp is not None and _is_loralayer(mlp):
@@ -173,8 +174,16 @@ def add_unsloth_improvements(
         'torch.nn.CrossEntropyLoss', FastCrossEntropyLoss,
         'transformers.models.llama.modeling_llama'
     )
+    patch_target_module(
+        'transformers.models.llama.modeling_llama.apply_rotary_pos_emb',
+        fast_rope_embedding,
+        # 'transformers.models.llama.modeling_llama'
+    )
     # base_model.forward = MethodType(_causal_f, base_model)
 
     backbone = getattr(base_model, _bb_name)
-    backbone.forward = MethodType(_bb_f, backbone)
+    patch_forward(
+        backbone, LlamaRMSNorm, rms_layernorm_forward
+    )
+    # backbone.forward = MethodType(_bb_f, backbone)
     return model
