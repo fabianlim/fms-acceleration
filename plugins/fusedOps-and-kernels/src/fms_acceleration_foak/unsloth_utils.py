@@ -57,3 +57,14 @@ def patch_target_module(
 
         # replace it
         setattr(source, obj_name_to_patch, original_obj)
+
+from peft.peft_model import PeftModelForCausalLM
+from .models import ModelPatcher
+def add_unsloth_improvements(
+    model: PeftModelForCausalLM, 
+    adapter_name: str = 'default',
+    stacked_over: str = 'auto_gptq',
+):
+
+    ModelPatcher.patch(model)
+    return model

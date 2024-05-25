@@ -39,7 +39,6 @@ class FastCrossEntropyLoss(CrossEntropyLoss):
         super().__init__()
 
     def forward(self, input, target):
-        print ('patched ent')
         # return super().forward(input, target)
         # return fast_cross_entropy_loss(input, target)
         loss = Fast_CrossEntropyLoss.apply(
@@ -82,3 +81,14 @@ def create_qkv_functions(attn: torch.nn.Module):
         return out
 
     return _lin_q, _lin_k, _lin_v
+
+from .model_patcher import ModelPatcher, ModelPatcherRule
+
+ModelPatcher.register(
+    ModelPatcherRule(
+        rule_id='llama-rms', trigger=LlamaRMSNorm, 
+        forward=fast_rms_layernorm
+    )
+)
+
+__all__ = []
