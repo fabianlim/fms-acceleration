@@ -1,8 +1,9 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Type, Callable, Union, List, Dict, Tuple, Set
 import torch
 from types import MethodType
-import importlib
+import importlib, inspect
+import pandas as pd
 
 # will be either a 
 # - module class, which triggers on isinstance
@@ -59,7 +60,10 @@ class ModelPatcherRule:
             )
 
         if self.trigger_type is None:
-            if issubclass(self.trigger, torch.nn.Module):
+            if (
+                inspect.isclass(self.trigger) and 
+                issubclass(self.trigger, torch.nn.Module)
+            ):
                 self.trigger_type = ModelPatcherTriggerType.module
             else:
                 self.trigger_type = ModelPatcherTriggerType.callable
@@ -67,29 +71,26 @@ class ModelPatcherRule:
 # helpful to keep a history of all patching that has been done
 @dataclass
 class ModelPatcherHistory:
-    # id of the class that was patched
-    id: int
+    # instance id of the class that was patched
+    instance: int
 
     # class of the torch.nn.Module that was patched
-    cls: Type 
+    cls: str
+
+    # parent class of the torch.nn.Module that was patched
+    parent_cls: str
+
+    # module name
+    module_name: str
+
+    # parent
+    parent_module_name: str
 
     # name of the rule that was applied
     rule_id: str
 
+
 # ------------------------ helpers -----------------------
-
-# def patch_forward(
-#     model: torch.nn.Module, target_module_type: Type, 
-#     forward: Callable,
-# ):
-#     for mod in model.modules():
-#         if isinstance(mod, target_module_type):
-#             mod.forward = MethodType(forward, mod)
-
-def convert_forward_to_builder(forward: ModelForward):
-    def _builder(_: torch.nn.Module):
-        return forward
-    return _builder
 
 # singleton class for patching models
 class ModelPatcher:
@@ -99,21 +100,23 @@ class ModelPatcher:
 
     # singleton list of rules that have been registered
     rules: Dict[str, ModelPatcherRule] = {}
-
-    # singleton boolean flag to reload patch modules
-    reload_patch_modules: bool = False
     
     @staticmethod
-    def load_patches(module_names: List[str]):
+    def load_patches(module_names: List[str], reload: bool = False):
         # each patch should be in a module that calls
         # ModelPatcher.register. So these will search
         # and load all the modules it can find
 
+        # reload will trigger the register in that module
         for plugin_name in module_names:
             if importlib.util.find_spec(plugin_name):
                 m = importlib.import_module(plugin_name)
-                if ModelPatcher.reload_patch_modules:
-                    importlib.reload(m)
+                if reload:
+                    try:
+                        importlib.reload(m)
+                    except AssertionError as e:
+                        # this is if it was loaded already
+                        pass
 
     @staticmethod
     def register(rule: ModelPatcherRule):
@@ -130,17 +133,19 @@ class ModelPatcher:
             trigger = rule.trigger
             trigger_type = rule.trigger_type
             if (
-                (
-                    trigger_type == ModelPatcherTriggerType.module 
-                    and isinstance(module, trigger)
-                ) 
-                or
-                (
-                    trigger_type == ModelPatcherTriggerType.callable
-                    and trigger(module)
-                )
+                trigger_type == ModelPatcherTriggerType.module 
+                and isinstance(module, trigger)
             ):
                 return name, rule
+            try:
+                # the function call may raise
+                if (
+                    trigger_type == ModelPatcherTriggerType.callable
+                    and trigger(module)
+                ):
+                    return name, rule
+            except:
+                pass
 
         return None, None
 
@@ -149,14 +154,25 @@ class ModelPatcher:
         model: torch.nn.Module, 
         visited: Set = None
     ):
+        # NOTE: should we avoid repatching?
+
         if visited is None:
             visited = set()
 
-        for mod in model.modules():
+        for name, mod in model.named_modules():
 
             # some stats
             mod_id = id(mod)
             mod_class_name = mod.__class__.__name__
+            name = name.split('.')
+            if len(name) > 2:
+                parent_module_name, module_name = '.'.join(name[:-1]), name[-1]
+                parent_mod = model.get_submodule(parent_module_name)
+                parent_mod_class_name = parent_mod.__class__.__name__
+            else:
+                # patching on model itself
+                module_name = name[0]
+                parent_mod_class_name = parent_module_name = ''
 
             rule_id, rule = ModelPatcher.is_trigger(mod)
             if rule_id is None:
@@ -167,6 +183,7 @@ class ModelPatcher:
                 forward = rule.forward
             else:
                 forward = rule.forward_builder(mod)
+
             if isinstance(forward, list):
                 # this will be list of tuples case
 
@@ -174,12 +191,12 @@ class ModelPatcher:
                 # - clear old rules
                 # - replace new rules
                 old_rules = ModelPatcher.rules
-                ModelPatcher.rules = []
+                ModelPatcher.rules = {}
                 for i, (trig, forw) in enumerate(forward):
                     ModelPatcher.register(ModelPatcherRule(
                         rule_id=f'{rule_id}-{i+1}',
                         trigger=trig, 
-                        forward_builder=convert_forward_to_builder(forw),
+                        forward=forw,
                     ))
 
                 # this is an isolated patch
@@ -188,12 +205,25 @@ class ModelPatcher:
                 # replace the rules
                 ModelPatcher.rules = old_rules
 
+                # done
                 continue
             
             # otherwise
             mod.forward = MethodType(forward, mod)
             ModelPatcher.history.append(
-                ModelPatcherHistory(id=mod_id, cls=mod_class_name, rule_id=rule_id)
+                ModelPatcherHistory(
+                    instance=mod_id, cls=mod_class_name, 
+                    parent_cls=parent_mod_class_name,
+                    module_name=module_name,
+                    parent_module_name=parent_module_name,
+                    rule_id=rule_id
+                )
             )
+
+    @staticmethod
+    def summary():
+        return pd.DataFrame([
+            asdict(entry) for entry in ModelPatcher.history
+        ])
 
 

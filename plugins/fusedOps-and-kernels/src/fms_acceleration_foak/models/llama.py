@@ -82,13 +82,41 @@ def create_qkv_functions(attn: torch.nn.Module):
 
     return _lin_q, _lin_k, _lin_v
 
+from transformers.models.llama.modeling_llama import LlamaAttention
+
+# simple utility function to guess if its lora layer
+def _is_loralayer(
+    module: torch.nn.Module, names = ['lora_A', 'lora_B', 'base_layer']
+):
+    return all([hasattr(module, x) for x in names])
+
+def trigger_qkv(module: torch.nn.Module):
+    return (
+        isinstance(module, LlamaAttention) and
+        _is_loralayer(module.q_proj) and
+        _is_loralayer(module.k_proj) and
+        _is_loralayer(module.v_proj)
+    )
+
+# FIXME: we need to be able to trigger on the 
+# name of the module as well
+def create_qkv_functions2(attn: torch.nn.Module):
+    q, k, v = create_qkv_functions(attn)
+    return [
+        (_is_loralayer, q)
+    ]
+
 from .model_patcher import ModelPatcher, ModelPatcherRule
 
+# ModelPatcher.register(
+#     ModelPatcherRule(
+#         rule_id='llama-rms', trigger=LlamaRMSNorm, 
+#         forward=fast_rms_layernorm
+#     ),
+# )
 ModelPatcher.register(
     ModelPatcherRule(
-        rule_id='llama-rms', trigger=LlamaRMSNorm, 
-        forward=fast_rms_layernorm
+        rule_id='llama-qkv', trigger=trigger_qkv, 
+        forward_builder=create_qkv_functions2
     )
 )
-
-__all__ = []
