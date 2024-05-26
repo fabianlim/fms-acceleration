@@ -58,8 +58,26 @@ def patch_target_module(
         # replace it
         setattr(source, obj_name_to_patch, original_obj)
 
+from torch.nn import CrossEntropyLoss
+from .kernels.unsloth.cross_entropy_loss import Fast_CrossEntropyLoss
+
+class FastCrossEntropyLoss(CrossEntropyLoss):
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, input, target):
+        # return super().forward(input, target)
+        # return fast_cross_entropy_loss(input, target)
+        loss = Fast_CrossEntropyLoss.apply(
+            input, target
+        )
+        n_items = torch.count_nonzero(target != -100)
+        return loss.sum() / n_items
+
 from peft.peft_model import PeftModelForCausalLM
 from .models import ModelPatcher
+from .kernels.unsloth.rope_embedding import fast_rope_embedding
 def add_unsloth_improvements(
     model: PeftModelForCausalLM, 
     adapter_name: str = 'default',
@@ -67,4 +85,13 @@ def add_unsloth_improvements(
 ):
 
     ModelPatcher.patch(model)
+    patch_target_module(
+        'torch.nn.CrossEntropyLoss', FastCrossEntropyLoss,
+        'transformers.models.llama.modeling_llama'
+    )
+    patch_target_module(
+        'transformers.models.llama.modeling_llama.apply_rotary_pos_emb',
+        fast_rope_embedding,
+        # 'transformers.models.llama.modeling_llama'
+    )
     return model

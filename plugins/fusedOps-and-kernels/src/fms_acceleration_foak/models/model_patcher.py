@@ -178,22 +178,6 @@ class ModelPatcher:
 
             if rule.trigger.is_triggered(module, module_name):
                 return name, rule
-            # trigger = rule.trigger
-            # trigger_type = rule.trigger_type
-            # if (
-            #     trigger_type == ModelPatcherTriggerType.module 
-            #     and isinstance(module, trigger)
-            # ):
-            #     return name, rule
-            # try:
-            #     # the function call may raise
-            #     if (
-            #         trigger_type == ModelPatcherTriggerType.callable
-            #         and trigger(module)
-            #     ):
-            #         return name, rule
-            # except:
-            #     pass
 
         return None, None
 
