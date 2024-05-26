@@ -47,7 +47,7 @@ class FastCrossEntropyLoss(CrossEntropyLoss):
         n_items = torch.count_nonzero(target != -100)
         return loss.sum() / n_items
 
-from ..fused_ops.unsloth_lora.gptq.fast_lora import apply_lora_qkv
+from ..fused_ops.unsloth_lora.gptq.fast_lora import apply_lora_qkv, apply_lora_o
 
 def create_qkv_functions(attn: torch.nn.Module):
 
@@ -90,33 +90,92 @@ def _is_loralayer(
 ):
     return all([hasattr(module, x) for x in names])
 
+# maybe need to seperate out the o rule
+# consider have a function to combine ModelPatcherRule
 def trigger_qkv(module: torch.nn.Module):
     return (
         isinstance(module, LlamaAttention) and
         _is_loralayer(module.q_proj) and
         _is_loralayer(module.k_proj) and
-        _is_loralayer(module.v_proj)
+        _is_loralayer(module.v_proj) and
+        _is_loralayer(module.o_proj)
     )
+
+# def trigger_o(module: torch.nn.Module):
+#     return (
+#         isinstance(module, LlamaAttention) and
+#         _is_loralayer(module.o_proj)
+#     )
+
+from ..fused_ops.unsloth_lora.gptq.fast_lora import get_lora_parameters, unpack_gptqstate, LoRA_W
+
+def apply_lora_o2(self, X):
+    Oqstate, OA, OB, OS = get_lora_parameters(self)
+    O = LoRA_W.apply(X, *unpack_gptqstate(Oqstate), OA, OB, OS)
+    return O
+
+from .model_patcher import ModelPatcher, ModelPatcherRule, ModelPatcherTrigger
 
 # FIXME: we need to be able to trigger on the 
 # name of the module as well
 def create_qkv_functions2(attn: torch.nn.Module):
-    q, k, v = create_qkv_functions(attn)
-    return [
-        (_is_loralayer, q)
-    ]
 
-from .model_patcher import ModelPatcher, ModelPatcherRule
+    qkv = [
+        (
+            ModelPatcherTrigger(
+                check=_is_loralayer, module_name=name
+            ), _check
+        )
+        for name, _check in zip(
+            ['q_proj', 'k_proj', 'v_proj'],
+            create_qkv_functions(attn)
+        )
+    ] 
+    if _is_loralayer(attn.o_proj):
+        qkv.append(
+            (
+                ModelPatcherTrigger(
+                    check=_is_loralayer, 
+                    module_name='o_proj'
+                ), apply_lora_o2
+            )
+        )
+    return qkv
 
-# ModelPatcher.register(
-#     ModelPatcherRule(
-#         rule_id='llama-rms', trigger=LlamaRMSNorm, 
-#         forward=fast_rms_layernorm
-#     ),
-# )
+# def create_o_functions(attn: torch.nn.Module):
+# 
+#     return [
+#         (
+#             ModelPatcherTrigger(
+#                 check=_is_loralayer, module_name='o_proj'
+#             ), apply_lora_o
+#         )
+#     ]
+
 ModelPatcher.register(
     ModelPatcherRule(
-        rule_id='llama-qkv', trigger=trigger_qkv, 
+        rule_id='llama-rms', # trigger=LlamaRMSNorm, 
+        trigger=ModelPatcherTrigger(
+            check=LlamaRMSNorm
+        ),
+        forward=fast_rms_layernorm
+    ),
+)
+ModelPatcher.register(
+    ModelPatcherRule(
+        rule_id='llama-qkv', # trigger=trigger_qkv, 
+        trigger=ModelPatcherTrigger(
+            check=trigger_qkv,
+        ),
         forward_builder=create_qkv_functions2
     )
 )
+# ModelPatcher.register(
+#     ModelPatcherRule(
+#         rule_id='llama-o', 
+#         trigger=ModelPatcherTrigger(
+#             check=trigger_o,
+#         ),
+#         forward_builder=create_o_functions
+#     )
+# )

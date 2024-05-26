@@ -9,16 +9,70 @@ import pandas as pd
 # - module class, which triggers on isinstance
 # - callable, which will be useful to trigger on custom checks
 # - (consider): adding a regex will will apply on the name
-ModelPatcherTrigger = Union[
-    torch.nn.Module, # trigger on isinstance
-    Callable[[torch.nn.Module], bool] # trigger on callable
-]
-ModelForward = Callable
+# ModelPatcherTrigger = Union[
+#     torch.nn.Module, # trigger on isinstance
+#     Callable[[torch.nn.Module], bool] # trigger on callable
+# ]
 
 from enum import Enum
 class ModelPatcherTriggerType(Enum):
     module = 1
     callable = 2
+
+@dataclass
+class ModelPatcherTrigger:
+
+    check: Union[
+        torch.nn.Module, # trigger on isinstance
+        Callable[[torch.nn.Module], bool] # trigger on callable
+    ]
+
+    type: ModelPatcherTriggerType = None
+
+    module_name: str = None
+
+    def is_triggered(
+        self, module: torch.nn.Module,
+        module_name: str,
+    ):
+
+        if (
+            self.module_name is not None and
+            module_name != self.module_name
+        ):
+            return False
+
+
+        if (
+            self.type == ModelPatcherTriggerType.module 
+            and isinstance(module, self.check)
+        ):
+            return True
+
+        try:
+            # the function call may raise
+            if (
+                self.type == ModelPatcherTriggerType.callable
+                and self.check(module)
+            ):
+                return True
+        except:
+            pass
+
+        return False
+
+    def __post_init__(self):
+
+        if self.type is None:
+            if (
+                inspect.isclass(self.check) and 
+                issubclass(self.check, torch.nn.Module)
+            ):
+                self.type = ModelPatcherTriggerType.module
+            else:
+                self.type = ModelPatcherTriggerType.callable
+
+ModelForward = Callable
 
 @dataclass
 class ModelPatcherRule:
@@ -29,7 +83,7 @@ class ModelPatcherRule:
     trigger: ModelPatcherTrigger
 
     # trigger type
-    trigger_type: ModelPatcherTriggerType = None
+    # trigger_type: ModelPatcherTriggerType = None
 
     # takes in the torch module to build the forward.
     # will be helpful to
@@ -59,14 +113,6 @@ class ModelPatcherRule:
                 "foward builder specified."
             )
 
-        if self.trigger_type is None:
-            if (
-                inspect.isclass(self.trigger) and 
-                issubclass(self.trigger, torch.nn.Module)
-            ):
-                self.trigger_type = ModelPatcherTriggerType.module
-            else:
-                self.trigger_type = ModelPatcherTriggerType.callable
 
 # helpful to keep a history of all patching that has been done
 @dataclass
@@ -127,32 +173,36 @@ class ModelPatcher:
         ModelPatcher.rules[rule.rule_id] = rule
 
     @staticmethod
-    def is_trigger(module: torch.nn.Module):
+    def is_triggered(module: torch.nn.Module, module_name: str):
         for name, rule in ModelPatcher.rules.items():
 
-            trigger = rule.trigger
-            trigger_type = rule.trigger_type
-            if (
-                trigger_type == ModelPatcherTriggerType.module 
-                and isinstance(module, trigger)
-            ):
+            if rule.trigger.is_triggered(module, module_name):
                 return name, rule
-            try:
-                # the function call may raise
-                if (
-                    trigger_type == ModelPatcherTriggerType.callable
-                    and trigger(module)
-                ):
-                    return name, rule
-            except:
-                pass
+            # trigger = rule.trigger
+            # trigger_type = rule.trigger_type
+            # if (
+            #     trigger_type == ModelPatcherTriggerType.module 
+            #     and isinstance(module, trigger)
+            # ):
+            #     return name, rule
+            # try:
+            #     # the function call may raise
+            #     if (
+            #         trigger_type == ModelPatcherTriggerType.callable
+            #         and trigger(module)
+            #     ):
+            #         return name, rule
+            # except:
+            #     pass
 
         return None, None
 
     @staticmethod
     def patch(
         model: torch.nn.Module, 
-        visited: Set = None
+        visited: Set = None,
+        parent_prefix: str = None,
+        parent_mcn: str  = None,
     ):
         # NOTE: should we avoid repatching?
 
@@ -173,8 +223,12 @@ class ModelPatcher:
                 # patching on model itself
                 module_name = name[0]
                 parent_mod_class_name = parent_module_name = ''
+                if parent_prefix is not None:
+                    parent_module_name = parent_prefix + '.' + parent_module_name
+                if parent_mcn is not None:
+                    parent_mod_class_name = parent_mcn
 
-            rule_id, rule = ModelPatcher.is_trigger(mod)
+            rule_id, rule = ModelPatcher.is_triggered(mod, module_name)
             if rule_id is None:
                 continue
 
@@ -200,7 +254,11 @@ class ModelPatcher:
                     ))
 
                 # this is an isolated patch
-                ModelPatcher.patch(mod, visited=visited)
+                ModelPatcher.patch(
+                    mod, visited=visited,
+                    parent_prefix=parent_module_name,
+                    parent_mcn=parent_mod_class_name,
+                )
 
                 # replace the rules
                 ModelPatcher.rules = old_rules
