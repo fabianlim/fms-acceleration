@@ -55,7 +55,10 @@ class AutoGPTQAccelerationPlugin(AccelerationPlugin):
         from auto_gptq.nn_modules.qlinear.qlinear_tritonv2 import QuantLinear #pylint: disable=import-outside-toplevel,import-error
 
         # Local
-        from .autogptq_utils import patch_forward_to_view_attributes_before_call #pylint: disable=import-outside-toplevel
+        from .autogptq_utils import ( #pylint: disable=import-outside-toplevel
+            patch_forward_to_view_attributes_before_call, 
+            PATCH_FOR_FSDP_TRITON_V2
+        )
 
         # Currently we allow only a quantized checkpoint to be loaded, we do not
         # implement the quantization process here.
@@ -145,9 +148,6 @@ class AutoGPTQAccelerationPlugin(AccelerationPlugin):
             world_size > 1
             and os.environ.get("ACCELERATE_USE_FSDP", "false").lower() == "true"
         ):
-            # these parameters are to be patched for triton v2
-            # consider making a map if patching more kernels
-            PATCH_FOR_FSDP_TRITON_V2 = ["qweight", "qzeros"]
 
             # patch all the QuantLinear base layers
             for mod in model.modules():
