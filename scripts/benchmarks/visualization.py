@@ -1,42 +1,64 @@
 import gradio as gr
 import numpy as np
 import pandas as pd
+from scripts.benchmarks.benchmark import (
+    gather_report,
+    RESULT_FIELD_ALLOCATED_GPU_MEM,
+    RESULT_FIELD_RESERVED_GPU_MEM,
+    RESULT_FIELD_PEAK_ALLOCATED_GPU_MEM,
+)
+from typing import List
 
-from scripts.benchmarks.benchmark import gather_report
+# remove_columns = [
+#     'before_init_mem_cpu', 
+#     'before_init_mem_gpu', 
+#     'init_mem_cpu_alloc_delta',
+#     'init_mem_cpu_peaked_delta',
+#     'init_mem_gpu_alloc_delta',
+#     'init_mem_gpu_peaked_delta',
+#     'train_mem_cpu_alloc_delta',
+#     'train_mem_cpu_peaked_delta',
+#     'train_mem_gpu_alloc_delta',
+#     'train_mem_gpu_peaked_delta',
+#     'acceleration_framework_config_file',
+#     'output_dir',
+#     #'error_messages'
+# ]
 
-remove_columns = [
-    'before_init_mem_cpu', 
-    'before_init_mem_gpu', 
-    'init_mem_cpu_alloc_delta',
-    'init_mem_cpu_peaked_delta',
-    'init_mem_gpu_alloc_delta',
-    'init_mem_gpu_peaked_delta',
-    'train_mem_cpu_alloc_delta',
-    'train_mem_cpu_peaked_delta',
-    'train_mem_gpu_alloc_delta',
-    'train_mem_gpu_peaked_delta',
-    'acceleration_framework_config_file',
-    'output_dir',
-    #'error_messages'
-]
+COL_MODEL_NAME_OR_PATH = 'model_name_or_path'
+COL_NUM_GPUS = 'num_gpus'
+COL_FRAMEWORK_CONFIG = 'framework_config'
+COL_PEFT_METHOD = 'peft_method'
+COL_ERROR_MESSAGES = 'error_messages'
+COL_TRAIN_TOKENS_PER_SEC = 'train_tokens_per_second'
+COL_TRAIN_LOSS = 'train_loss'
 
-df, constants = gather_report('benchmark_outputs_final2', raw=False)
-df = df[df.columns[~df.columns.isin(remove_columns)]]
-df['error_messages'] = df['error_messages'].isna()
+METRIC_THROUGHPUT = 'throughput'
+BARPLOT_1 = {
+    'y': COL_TRAIN_TOKENS_PER_SEC,
+    'x': METRIC_THROUGHPUT,
+    'color': COL_FRAMEWORK_CONFIG,
+    'group': COL_NUM_GPUS,
+    'title': COL_TRAIN_TOKENS_PER_SEC,
+    'group_title': COL_NUM_GPUS,
+    'tooltip': [
+        COL_MODEL_NAME_OR_PATH,
+        COL_FRAMEWORK_CONFIG,
+        COL_PEFT_METHOD,
+        COL_TRAIN_TOKENS_PER_SEC,
+    ]
+}
 
-def reassemble(df, constants):
-    if len(constants) == 0:
-        return df
-    df = df.copy()
-    for k,v in constants.items():
-        df[k] = v
+def fetch_data(result_dirs: List[str], columns: List[str] = None):
+    df, _ = gather_report(result_dirs, raw=True)
+    # df = df[df.columns[~df.columns.isin(remove_columns)]]
+    df[COL_ERROR_MESSAGES] = df[COL_ERROR_MESSAGES].isna()
+    if columns is not None:
+        df = df[[x for x in columns if x in df.columns]]
     return df
 
-
-df = reassemble(df, {k:v for k,v in constants.items() if k in ['peft_method']})
-
-
-def create_dropdown(column_name):
+# values = sorted(df[column_name].unique().tolist())
+def create_dropdown(df: pd.DataFrame, column_name: str):
     values = sorted(df[column_name].unique().tolist())
     return gr.Dropdown(
         values, 
@@ -45,63 +67,78 @@ def create_dropdown(column_name):
         value=values,
     )
     
-def select_data(df, column_name, values):
+def select_data(df: pd.DataFrame, column_name: str, values: List[str]):
     if len(values) == 0:
         return df
     return df.query(f'{column_name} in @values')
 
-dataframe = gr.Dataframe(
-    label="Benchmark Results", 
-    #value=df,
-    interactive=False
-)
-
-train_toks_barplot = gr.BarPlot(
-    y="train_tokens_per_second",
-    x="throughput",
-    color="framework_config",
-    group="num_gpus",
-    title="train_tokens_per_second",
-    group_title="num_gpus",
-    tooltip=["model_name_or_path", "framework_config", "peft_method", "train_tokens_per_second"],
-    vertical=False,
-)
-
-def update(
-    model_name_or_path, 
-    num_gpus,
-    peft_method,
-    framework_config,
-):
-    _df = df
-    _df = select_data(_df, 'model_name_or_path', model_name_or_path)
-    _df = select_data(_df, 'num_gpus', num_gpus)
-    _df = select_data(_df, 'peft_method', peft_method)
-    _df = select_data(_df, 'framework_config', framework_config)
-
-    numbers = _df[['model_name_or_path', 'num_gpus', 'framework_config', 'peft_method', 'train_tokens_per_second', 'train_loss'] + list(x for x in df.columns if 'mem' in x)]
-    numbers = numbers.drop_duplicates(['model_name_or_path', 'num_gpus', 'framework_config', 'peft_method'])
-    TPS = []
-    for _, A in numbers.groupby('num_gpus'):
-        A['throughput'] = A['train_tokens_per_second'].rank(method='first', ascending=False)
-        TPS.append(A)
-        
-    return numbers, pd.concat(TPS)
-
-demo = gr.Interface(
-    fn=update,
-    inputs=[
-        create_dropdown('model_name_or_path'),
-        create_dropdown('num_gpus'),
-        create_dropdown('peft_method'),
-        create_dropdown('framework_config'),
-    ],
-    outputs=[
-        dataframe, train_toks_barplot
-    ],
-)
-
 if __name__ == "__main__":
+
+    MAIN_COLUMNS = [
+        COL_MODEL_NAME_OR_PATH,
+        COL_NUM_GPUS,
+        COL_FRAMEWORK_CONFIG,
+        COL_PEFT_METHOD,
+    ]
+
+    REPORT_DIRS = [
+        'benchmark_outputs_final2'
+    ]
+    df = fetch_data(
+        REPORT_DIRS, columns = [
+            *MAIN_COLUMNS,
+            COL_TRAIN_TOKENS_PER_SEC,
+            COL_TRAIN_LOSS,
+            RESULT_FIELD_ALLOCATED_GPU_MEM,
+            RESULT_FIELD_RESERVED_GPU_MEM,
+            RESULT_FIELD_PEAK_ALLOCATED_GPU_MEM,
+        ]
+    )
+    # laziness
+    df = df.drop_duplicates(MAIN_COLUMNS)
+
+    # binds to df by closure
+    def update(
+        model_name_or_path: str, 
+        num_gpus,
+        framework_config: str,
+        peft_method: str,
+    ):
+        _df = df
+        _df = select_data(_df, COL_MODEL_NAME_OR_PATH, model_name_or_path)
+        _df = select_data(_df, COL_NUM_GPUS, num_gpus)
+        _df = select_data(_df, COL_FRAMEWORK_CONFIG, framework_config)
+        _df = select_data(_df, COL_PEFT_METHOD, peft_method)
+
+        TPS = []
+        for _, A in _df.groupby(COL_NUM_GPUS):
+            A[METRIC_THROUGHPUT] = A[COL_TRAIN_TOKENS_PER_SEC].rank(
+                method='first', ascending=False
+            )
+            TPS.append(A)
+        
+        return _df, pd.concat(TPS)
+
+    demo = gr.Interface(
+        fn=update,
+        inputs=[
+            create_dropdown(df, COL_MODEL_NAME_OR_PATH),
+            create_dropdown(df, COL_NUM_GPUS),
+            create_dropdown(df, COL_FRAMEWORK_CONFIG),
+            create_dropdown(df, COL_PEFT_METHOD),
+        ],
+        outputs=[
+            gr.Dataframe(
+                label="Benchmark Results", 
+                interactive=False
+            ),
+            gr.BarPlot(
+                **BARPLOT_1,
+                vertical=False,
+            )
+        ],
+    )
+
     demo.launch(
         server_name='localhost', 
         server_port=7860
