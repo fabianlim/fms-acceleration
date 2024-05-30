@@ -46,7 +46,8 @@ BARPLOT_1 = {
         COL_FRAMEWORK_CONFIG,
         COL_PEFT_METHOD,
         COL_TRAIN_TOKENS_PER_SEC,
-    ]
+    ],
+    'label': COL_TRAIN_TOKENS_PER_SEC,
 }
 
 def fetch_data(result_dirs: List[str], columns: List[str] = None):
@@ -119,25 +120,25 @@ if __name__ == "__main__":
         
         return _df, pd.concat(TPS)
 
-    demo = gr.Interface(
-        fn=update,
-        inputs=[
-            create_dropdown(df, COL_MODEL_NAME_OR_PATH),
-            create_dropdown(df, COL_NUM_GPUS),
-            create_dropdown(df, COL_FRAMEWORK_CONFIG),
-            create_dropdown(df, COL_PEFT_METHOD),
-        ],
-        outputs=[
-            gr.Dataframe(
-                label="Benchmark Results", 
-                interactive=False
-            ),
-            gr.BarPlot(
+    with gr.Blocks() as demo:
+        with gr.Row():
+            with gr.Column():
+                mnop = create_dropdown(df, COL_MODEL_NAME_OR_PATH)
+                ng = create_dropdown(df, COL_NUM_GPUS)
+                fc = create_dropdown(df, COL_FRAMEWORK_CONFIG)
+                pm = create_dropdown(df, COL_PEFT_METHOD)
+
+            bar1 = gr.BarPlot(
                 **BARPLOT_1,
                 vertical=False,
             )
-        ],
-    )
+        dataframe = gr.Dataframe(
+            label="Benchmark Results", 
+            value=df,
+            interactive=False
+        )
+        btn = gr.Button('Display')
+        btn.click(fn=update, inputs=[mnop, ng, fc, pm], outputs=[dataframe, bar1])
 
     demo.launch(
         server_name='localhost', 
