@@ -8,22 +8,7 @@ from scripts.benchmarks.benchmark import (
     RESULT_FIELD_PEAK_ALLOCATED_GPU_MEM,
 )
 from typing import List
-
-# remove_columns = [
-#     'before_init_mem_cpu', 
-#     'before_init_mem_gpu', 
-#     'init_mem_cpu_alloc_delta',
-#     'init_mem_cpu_peaked_delta',
-#     'init_mem_gpu_alloc_delta',
-#     'init_mem_gpu_peaked_delta',
-#     'train_mem_cpu_alloc_delta',
-#     'train_mem_cpu_peaked_delta',
-#     'train_mem_gpu_alloc_delta',
-#     'train_mem_gpu_peaked_delta',
-#     'acceleration_framework_config_file',
-#     'output_dir',
-#     #'error_messages'
-# ]
+import argparse
 
 COL_MODEL_NAME_OR_PATH = 'model_name_or_path'
 COL_NUM_GPUS = 'num_gpus'
@@ -52,8 +37,8 @@ BARPLOT_1 = {
 
 def fetch_data(result_dirs: List[str], columns: List[str] = None):
     df, _ = gather_report(result_dirs, raw=True)
-    # df = df[df.columns[~df.columns.isin(remove_columns)]]
-    df[COL_ERROR_MESSAGES] = df[COL_ERROR_MESSAGES].isna()
+    if COL_ERROR_MESSAGES in df.columns:
+        df[COL_ERROR_MESSAGES] = df[COL_ERROR_MESSAGES].isna()
     if columns is not None:
         df = df[[x for x in columns if x in df.columns]]
     return df
@@ -75,6 +60,24 @@ def select_data(df: pd.DataFrame, column_name: str, values: List[str]):
 
 if __name__ == "__main__":
 
+    parser = argparse.ArgumentParser(
+        prog="Visualization Script",
+        description="This script runs a Gradio based visualizer",
+    )
+
+    parser.add_argument(
+        "result_dirs",
+        nargs="+",
+        help="list of result dirs to pull data from",
+    )
+    parser.add_argument(
+        "--server_name", help="server name to host on", default='localhost'
+    )
+    parser.add_argument(
+        "--port", type=int, help="port to listen on", default=7860
+    )
+    args = parser.parse_args()
+
     MAIN_COLUMNS = [
         COL_MODEL_NAME_OR_PATH,
         COL_NUM_GPUS,
@@ -82,11 +85,8 @@ if __name__ == "__main__":
         COL_PEFT_METHOD,
     ]
 
-    REPORT_DIRS = [
-        'benchmark_outputs_final2'
-    ]
     df = fetch_data(
-        REPORT_DIRS, columns = [
+        args.result_dirs, columns = [
             *MAIN_COLUMNS,
             COL_TRAIN_TOKENS_PER_SEC,
             COL_TRAIN_LOSS,
@@ -141,6 +141,6 @@ if __name__ == "__main__":
         btn.click(fn=update, inputs=[mnop, ng, fc, pm], outputs=[dataframe, bar1])
 
     demo.launch(
-        server_name='localhost', 
-        server_port=7860
+        server_name=args.server_name, 
+        server_port=args.port
     )
