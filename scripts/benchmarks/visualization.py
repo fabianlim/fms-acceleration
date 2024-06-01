@@ -18,7 +18,12 @@ COL_ERROR_MESSAGES = 'error_messages'
 COL_TRAIN_TOKENS_PER_SEC = 'train_tokens_per_second'
 COL_TRAIN_LOSS = 'train_loss'
 
-METRIC_THROUGHPUT = 'throughput'
+# to replace nan
+DEFAULT_VALS = {
+    COL_PEFT_METHOD: 'none'
+}
+
+METRIC_THROUGHPUT = 'rank'
 BARPLOT_1 = {
     'y': COL_TRAIN_TOKENS_PER_SEC,
     'x': METRIC_THROUGHPUT,
@@ -33,6 +38,11 @@ BARPLOT_1 = {
         COL_TRAIN_TOKENS_PER_SEC,
     ],
     'label': COL_TRAIN_TOKENS_PER_SEC,
+    'vertical': False,
+}
+
+CHARTS = {
+    COL_TRAIN_TOKENS_PER_SEC: BARPLOT_1
 }
 
 def fetch_data(result_dirs: List[str], columns: List[str] = None):
@@ -41,9 +51,26 @@ def fetch_data(result_dirs: List[str], columns: List[str] = None):
         df[COL_ERROR_MESSAGES] = df[COL_ERROR_MESSAGES].isna()
     if columns is not None:
         df = df[[x for x in columns if x in df.columns]]
+
+    # replace defaults
+    for k, default in DEFAULT_VALS.items():
+        df.loc[df[k].isna(), k]  = default
     return df
 
-# values = sorted(df[column_name].unique().tolist())
+# def handle_duplicates(df: pd.DataFrame, columns: List[str]):
+#     return df.drop_duplicates(columns)
+
+# for now handle by max
+def handle_duplicates(
+    df: pd.DataFrame, columns: List[str],
+    target_column: str, 
+):
+    DFS = []
+    for _, A in df.groupby(columns):
+        ind = A[target_column].to_numpy().argmax() # by max now
+        DFS.append(A.iloc[ind:ind+1]) # to get a dataframe
+    return pd.concat(DFS).sort_index()
+
 def create_dropdown(df: pd.DataFrame, column_name: str):
     values = sorted(df[column_name].unique().tolist())
     return gr.Dropdown(
@@ -85,18 +112,22 @@ if __name__ == "__main__":
         COL_PEFT_METHOD,
     ]
 
-    df = fetch_data(
-        args.result_dirs, columns = [
-            *MAIN_COLUMNS,
-            COL_TRAIN_TOKENS_PER_SEC,
-            COL_TRAIN_LOSS,
-            RESULT_FIELD_ALLOCATED_GPU_MEM,
-            RESULT_FIELD_RESERVED_GPU_MEM,
-            RESULT_FIELD_PEAK_ALLOCATED_GPU_MEM,
-        ]
-    )
-    # laziness
-    df = df.drop_duplicates(MAIN_COLUMNS)
+    df: pd.DataFrame = None
+    def refresh_data():
+        global df
+        df = fetch_data(
+            args.result_dirs, columns = [
+                *MAIN_COLUMNS,
+                COL_TRAIN_TOKENS_PER_SEC,
+                COL_TRAIN_LOSS,
+                RESULT_FIELD_ALLOCATED_GPU_MEM,
+                RESULT_FIELD_RESERVED_GPU_MEM,
+                RESULT_FIELD_PEAK_ALLOCATED_GPU_MEM,
+            ]
+        )
+
+        # dedupe the rows by MAIN_COLUMNS
+        df = handle_duplicates(df, MAIN_COLUMNS, COL_TRAIN_TOKENS_PER_SEC)
 
     # binds to df by closure
     def update(
@@ -104,6 +135,7 @@ if __name__ == "__main__":
         num_gpus,
         framework_config: str,
         peft_method: str,
+        chart: str,
     ):
         _df = df
         _df = select_data(_df, COL_MODEL_NAME_OR_PATH, model_name_or_path)
@@ -113,13 +145,14 @@ if __name__ == "__main__":
 
         TPS = []
         for _, A in _df.groupby(COL_NUM_GPUS):
-            A[METRIC_THROUGHPUT] = A[COL_TRAIN_TOKENS_PER_SEC].rank(
+            A[METRIC_THROUGHPUT] = A[chart].rank(
                 method='first', ascending=False
             )
             TPS.append(A)
-        
-        return _df, pd.concat(TPS)
 
+        return _df, gr.BarPlot(pd.concat(TPS), **CHARTS[chart])
+
+    refresh_data()
     with gr.Blocks() as demo:
         with gr.Row():
             with gr.Column():
@@ -128,17 +161,32 @@ if __name__ == "__main__":
                 fc = create_dropdown(df, COL_FRAMEWORK_CONFIG)
                 pm = create_dropdown(df, COL_PEFT_METHOD)
 
-            bar1 = gr.BarPlot(
-                **BARPLOT_1,
-                vertical=False,
-            )
+
+            with gr.Column():
+                chart = gr.Dropdown(
+                    choices=[
+                        COL_TRAIN_TOKENS_PER_SEC
+                    ],
+                    value=COL_TRAIN_TOKENS_PER_SEC,
+                    label="Graph",
+                )
+                bar1 = gr.BarPlot()
         dataframe = gr.Dataframe(
             label="Benchmark Results", 
             value=df,
             interactive=False
         )
         btn = gr.Button('Display')
-        btn.click(fn=update, inputs=[mnop, ng, fc, pm], outputs=[dataframe, bar1])
+        btn.click(
+            fn=update, 
+            inputs=[mnop, ng, fc, pm, chart], 
+            outputs=[dataframe, bar1]
+        )
+        demo.load(
+            fn=update, 
+            inputs=[mnop, ng, fc, pm, chart], 
+            outputs=[dataframe, bar1]
+        )
 
     demo.launch(
         server_name=args.server_name, 
