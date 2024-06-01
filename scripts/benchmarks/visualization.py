@@ -35,6 +35,7 @@ COL_FORMAT = {
     COL_TRAIN_LOSS: lambda x: round(x, 2),
     COL_TORCH_ALLOC_MEM: lambda x: round(x / 1024 ** 2),
     COL_TORCH_PEAK_MEM: lambda x: round(x / 1024 ** 2),
+    COL_NUM_GPUS: lambda x: str(x),
 }
 
 MAIN_COLUMNS = [
@@ -49,13 +50,11 @@ DEFAULT_VALS = {
     COL_PEFT_METHOD: 'none'
 }
 
-METRIC_THROUGHPUT = 'rank'
+METRIC_RANK = 'rank'
 BARPLOT_1 = {
-    'y': COL_TRAIN_TOKENS_PER_SEC,
-    'x': METRIC_THROUGHPUT,
+    'x': METRIC_RANK,
     'color': COL_FRAMEWORK_CONFIG,
     'group': COL_NUM_GPUS,
-    'title': COL_TRAIN_TOKENS_PER_SEC,
     'group_title': COL_NUM_GPUS,
     'tooltip': [
         COL_MODEL_NAME_OR_PATH,
@@ -63,12 +62,56 @@ BARPLOT_1 = {
         COL_PEFT_METHOD,
         COL_TRAIN_TOKENS_PER_SEC,
     ],
-    'label': COL_TRAIN_TOKENS_PER_SEC,
+    'vertical': False,
+}
+def FORMAT_1(df: pd.DataFrame, chart: str):
+    TPS = []
+    for _, A in df.groupby(COL_NUM_GPUS):
+        A[METRIC_RANK] = A[chart].rank(
+            method='first', ascending=False
+        )
+        TPS.append(A)
+    return pd.concat(TPS)
+
+BARPLOT_2 = {
+    'x': COL_NUM_GPUS,
+    'color': COL_FRAMEWORK_CONFIG,
+    'group': METRIC_RANK,
+    'title': COL_TORCH_PEAK_MEM,
+    'group_title': METRIC_RANK,
+    'tooltip': [
+        COL_MODEL_NAME_OR_PATH,
+        COL_FRAMEWORK_CONFIG,
+        COL_PEFT_METHOD,
+        COL_TORCH_PEAK_MEM,
+    ],
     'vertical': False,
 }
 
+def FORMAT_2(df: pd.DataFrame, chart: str):
+    A = df.groupby([
+        COL_MODEL_NAME_OR_PATH, COL_FRAMEWORK_CONFIG, COL_PEFT_METHOD
+    ])[chart].max().to_frame()
+    # A= A.loc[A[chart] > 0] # take out those wtih zerw
+    A[METRIC_RANK] = A.rank(
+        method='first', ascending=False
+    )
+    return df.set_index(MAIN_COLUMNS).join(
+        A.drop(chart, axis=1), 
+        on=[COL_MODEL_NAME_OR_PATH, COL_FRAMEWORK_CONFIG, COL_PEFT_METHOD],
+        how='inner'
+    ).reset_index()
+
 CHARTS = {
-    COL_TRAIN_TOKENS_PER_SEC: BARPLOT_1
+    COL_TRAIN_TOKENS_PER_SEC: BARPLOT_1,
+    COL_TORCH_PEAK_MEM: BARPLOT_2,
+    COL_TORCH_ALLOC_MEM: BARPLOT_2,
+}
+
+FUNCS = {
+    COL_TRAIN_TOKENS_PER_SEC: FORMAT_1,
+    COL_TORCH_PEAK_MEM: FORMAT_2,
+    COL_TORCH_ALLOC_MEM: FORMAT_2,
 }
 
 def fetch_data(
@@ -161,9 +204,6 @@ def refresh_data():
         renames=COL_RENAMES,
     )
 
-    # dedupe the rows by MAIN_COLUMNS
-    df = handle_duplicates(df, MAIN_COLUMNS, COL_TRAIN_TOKENS_PER_SEC)
-
 # binds to df by closure
 def update(
     model_name_or_path: str, 
@@ -172,20 +212,21 @@ def update(
     peft_method: str,
     chart: str,
 ):
-    _df = df
+
+    # dedupe the rows by MAIN_COLUMNS
+    _df = handle_duplicates(df, MAIN_COLUMNS, chart)
+
+    # select
     _df = select_data(_df, COL_MODEL_NAME_OR_PATH, model_name_or_path)
     _df = select_data(_df, COL_NUM_GPUS, num_gpus)
     _df = select_data(_df, COL_FRAMEWORK_CONFIG, framework_config)
     _df = select_data(_df, COL_PEFT_METHOD, peft_method)
 
-    TPS = []
-    for _, A in _df.groupby(COL_NUM_GPUS):
-        A[METRIC_THROUGHPUT] = A[chart].rank(
-            method='first', ascending=False
-        )
-        TPS.append(A)
-
-    return _df, gr.BarPlot(pd.concat(TPS), **CHARTS[chart])
+    return _df, gr.BarPlot(
+        FUNCS[chart](_df, chart), 
+        y=chart, label=chart,
+        **CHARTS[chart],
+    )
 
 refresh_data()
 with gr.Blocks() as demo:
@@ -199,7 +240,9 @@ with gr.Blocks() as demo:
         with gr.Column():
             chart = gr.Dropdown(
                 choices=[
-                    COL_TRAIN_TOKENS_PER_SEC
+                    COL_TRAIN_TOKENS_PER_SEC,
+                    COL_TORCH_PEAK_MEM,
+                    COL_TORCH_ALLOC_MEM,
                 ],
                 value=COL_TRAIN_TOKENS_PER_SEC,
                 label="Graph",
