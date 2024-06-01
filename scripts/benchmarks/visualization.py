@@ -3,20 +3,46 @@ import numpy as np
 import pandas as pd
 from scripts.benchmarks.benchmark import (
     gather_report,
-    RESULT_FIELD_ALLOCATED_GPU_MEM,
-    RESULT_FIELD_RESERVED_GPU_MEM,
-    RESULT_FIELD_PEAK_ALLOCATED_GPU_MEM,
+    RESULT_FIELD_ALLOCATED_GPU_MEM as _RESULT_FIELD_ALLOCATED_GPU_MEM,
+    RESULT_FIELD_PEAK_ALLOCATED_GPU_MEM as _RESULT_FIELD_PEAK_ALLOCATED_GPU_MEM,
+    RESULT_FIELD_RESERVED_GPU_MEM as _RESULT_FIELD_RESERVED_GPU_MEM,
 )
-from typing import List
+
+_RESULT_FIELD_TRAIN_TOKENS_PER_SEC = 'train_tokens_per_second'
+
+from typing import List, Dict
 import argparse
 
+COL_TORCH_ALLOC_MEM = 'mem_alloc'
+COL_TORCH_PEAK_MEM = 'mem_peak'
+COL_NVIDIA_SMI_MEN = 'nvidia_smi'
 COL_MODEL_NAME_OR_PATH = 'model_name_or_path'
 COL_NUM_GPUS = 'num_gpus'
 COL_FRAMEWORK_CONFIG = 'framework_config'
 COL_PEFT_METHOD = 'peft_method'
 COL_ERROR_MESSAGES = 'error_messages'
-COL_TRAIN_TOKENS_PER_SEC = 'train_tokens_per_second'
+COL_TRAIN_TOKENS_PER_SEC = 'tr_toks_per_sec'
 COL_TRAIN_LOSS = 'train_loss'
+
+COL_RENAMES = {
+    _RESULT_FIELD_ALLOCATED_GPU_MEM: COL_TORCH_ALLOC_MEM,
+    _RESULT_FIELD_PEAK_ALLOCATED_GPU_MEM: COL_TORCH_PEAK_MEM,
+    _RESULT_FIELD_RESERVED_GPU_MEM: COL_NVIDIA_SMI_MEN,
+    _RESULT_FIELD_TRAIN_TOKENS_PER_SEC: COL_TRAIN_TOKENS_PER_SEC,
+}
+
+COL_FORMAT = {
+    COL_TRAIN_LOSS: lambda x: round(x, 2),
+    COL_TORCH_ALLOC_MEM: lambda x: round(x / 1024 ** 2),
+    COL_TORCH_PEAK_MEM: lambda x: round(x / 1024 ** 2),
+}
+
+MAIN_COLUMNS = [
+    COL_MODEL_NAME_OR_PATH,
+    COL_NUM_GPUS,
+    COL_FRAMEWORK_CONFIG,
+    COL_PEFT_METHOD,
+]
 
 # to replace nan
 DEFAULT_VALS = {
@@ -45,12 +71,25 @@ CHARTS = {
     COL_TRAIN_TOKENS_PER_SEC: BARPLOT_1
 }
 
-def fetch_data(result_dirs: List[str], columns: List[str] = None):
+def fetch_data(
+    result_dirs: List[str], columns: List[str] = None,
+    renames: Dict = None
+):
+    if renames is None:
+        renames = {}
+
     df, _ = gather_report(result_dirs, raw=True)
     if COL_ERROR_MESSAGES in df.columns:
         df[COL_ERROR_MESSAGES] = df[COL_ERROR_MESSAGES].isna()
     if columns is not None:
         df = df[[x for x in columns if x in df.columns]]
+
+    # handle renames
+    df = df.rename(columns=renames)
+    
+    # handle formatting
+    for k, func in COL_FORMAT.items():
+        df[k] = df[k].apply(func)
 
     # replace defaults
     for k, default in DEFAULT_VALS.items():
@@ -106,25 +145,20 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-MAIN_COLUMNS = [
-    COL_MODEL_NAME_OR_PATH,
-    COL_NUM_GPUS,
-    COL_FRAMEWORK_CONFIG,
-    COL_PEFT_METHOD,
-]
-
 df: pd.DataFrame = None
 def refresh_data():
     global df
     df = fetch_data(
         args.result_dirs, columns = [
             *MAIN_COLUMNS,
-            COL_TRAIN_TOKENS_PER_SEC,
+            _RESULT_FIELD_TRAIN_TOKENS_PER_SEC,
             COL_TRAIN_LOSS,
-            RESULT_FIELD_ALLOCATED_GPU_MEM,
-            RESULT_FIELD_RESERVED_GPU_MEM,
-            RESULT_FIELD_PEAK_ALLOCATED_GPU_MEM,
-        ]
+            COL_TORCH_ALLOC_MEM,
+            _RESULT_FIELD_ALLOCATED_GPU_MEM,
+            _RESULT_FIELD_PEAK_ALLOCATED_GPU_MEM,
+            _RESULT_FIELD_RESERVED_GPU_MEM,
+        ],
+        renames=COL_RENAMES,
     )
 
     # dedupe the rows by MAIN_COLUMNS
