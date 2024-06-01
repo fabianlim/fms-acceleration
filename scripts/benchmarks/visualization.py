@@ -85,109 +85,110 @@ def select_data(df: pd.DataFrame, column_name: str, values: List[str]):
         return df
     return df.query(f'{column_name} in @values')
 
-if __name__ == "__main__":
 
-    parser = argparse.ArgumentParser(
-        prog="Visualization Script",
-        description="This script runs a Gradio based visualizer",
+# SCRIPT starts here
+parser = argparse.ArgumentParser(
+    prog="Visualization Script",
+    description="This script runs a Gradio based visualizer",
+)
+
+parser.add_argument(
+    "--result_dirs",
+    nargs="+",
+    help="list of result dirs to pull data from",
+    default=['benchmark_outputs4', 'benchmark_outputs5']
+)
+parser.add_argument(
+    "--server_name", help="server name to host on", default='localhost'
+)
+parser.add_argument(
+    "--port", type=int, help="port to listen on", default=7860
+)
+args = parser.parse_args()
+
+MAIN_COLUMNS = [
+    COL_MODEL_NAME_OR_PATH,
+    COL_NUM_GPUS,
+    COL_FRAMEWORK_CONFIG,
+    COL_PEFT_METHOD,
+]
+
+df: pd.DataFrame = None
+def refresh_data():
+    global df
+    df = fetch_data(
+        args.result_dirs, columns = [
+            *MAIN_COLUMNS,
+            COL_TRAIN_TOKENS_PER_SEC,
+            COL_TRAIN_LOSS,
+            RESULT_FIELD_ALLOCATED_GPU_MEM,
+            RESULT_FIELD_RESERVED_GPU_MEM,
+            RESULT_FIELD_PEAK_ALLOCATED_GPU_MEM,
+        ]
     )
 
-    parser.add_argument(
-        "result_dirs",
-        nargs="+",
-        help="list of result dirs to pull data from",
-    )
-    parser.add_argument(
-        "--server_name", help="server name to host on", default='localhost'
-    )
-    parser.add_argument(
-        "--port", type=int, help="port to listen on", default=7860
-    )
-    args = parser.parse_args()
+    # dedupe the rows by MAIN_COLUMNS
+    df = handle_duplicates(df, MAIN_COLUMNS, COL_TRAIN_TOKENS_PER_SEC)
 
-    MAIN_COLUMNS = [
-        COL_MODEL_NAME_OR_PATH,
-        COL_NUM_GPUS,
-        COL_FRAMEWORK_CONFIG,
-        COL_PEFT_METHOD,
-    ]
+# binds to df by closure
+def update(
+    model_name_or_path: str, 
+    num_gpus,
+    framework_config: str,
+    peft_method: str,
+    chart: str,
+):
+    _df = df
+    _df = select_data(_df, COL_MODEL_NAME_OR_PATH, model_name_or_path)
+    _df = select_data(_df, COL_NUM_GPUS, num_gpus)
+    _df = select_data(_df, COL_FRAMEWORK_CONFIG, framework_config)
+    _df = select_data(_df, COL_PEFT_METHOD, peft_method)
 
-    df: pd.DataFrame = None
-    def refresh_data():
-        global df
-        df = fetch_data(
-            args.result_dirs, columns = [
-                *MAIN_COLUMNS,
-                COL_TRAIN_TOKENS_PER_SEC,
-                COL_TRAIN_LOSS,
-                RESULT_FIELD_ALLOCATED_GPU_MEM,
-                RESULT_FIELD_RESERVED_GPU_MEM,
-                RESULT_FIELD_PEAK_ALLOCATED_GPU_MEM,
-            ]
+    TPS = []
+    for _, A in _df.groupby(COL_NUM_GPUS):
+        A[METRIC_THROUGHPUT] = A[chart].rank(
+            method='first', ascending=False
         )
+        TPS.append(A)
 
-        # dedupe the rows by MAIN_COLUMNS
-        df = handle_duplicates(df, MAIN_COLUMNS, COL_TRAIN_TOKENS_PER_SEC)
+    return _df, gr.BarPlot(pd.concat(TPS), **CHARTS[chart])
 
-    # binds to df by closure
-    def update(
-        model_name_or_path: str, 
-        num_gpus,
-        framework_config: str,
-        peft_method: str,
-        chart: str,
-    ):
-        _df = df
-        _df = select_data(_df, COL_MODEL_NAME_OR_PATH, model_name_or_path)
-        _df = select_data(_df, COL_NUM_GPUS, num_gpus)
-        _df = select_data(_df, COL_FRAMEWORK_CONFIG, framework_config)
-        _df = select_data(_df, COL_PEFT_METHOD, peft_method)
+refresh_data()
+with gr.Blocks() as demo:
+    with gr.Row():
+        with gr.Column():
+            mnop = create_dropdown(df, COL_MODEL_NAME_OR_PATH)
+            ng = create_dropdown(df, COL_NUM_GPUS)
+            fc = create_dropdown(df, COL_FRAMEWORK_CONFIG)
+            pm = create_dropdown(df, COL_PEFT_METHOD)
 
-        TPS = []
-        for _, A in _df.groupby(COL_NUM_GPUS):
-            A[METRIC_THROUGHPUT] = A[chart].rank(
-                method='first', ascending=False
+        with gr.Column():
+            chart = gr.Dropdown(
+                choices=[
+                    COL_TRAIN_TOKENS_PER_SEC
+                ],
+                value=COL_TRAIN_TOKENS_PER_SEC,
+                label="Graph",
             )
-            TPS.append(A)
+            bar1 = gr.BarPlot()
+    dataframe = gr.Dataframe(
+        label="Benchmark Results", 
+        value=df,
+        interactive=False
+    )
+    btn = gr.Button('Display')
+    btn.click(
+        fn=update, 
+        inputs=[mnop, ng, fc, pm, chart], 
+        outputs=[dataframe, bar1]
+    )
+    demo.load(
+        fn=update, 
+        inputs=[mnop, ng, fc, pm, chart], 
+        outputs=[dataframe, bar1]
+    )
 
-        return _df, gr.BarPlot(pd.concat(TPS), **CHARTS[chart])
-
-    refresh_data()
-    with gr.Blocks() as demo:
-        with gr.Row():
-            with gr.Column():
-                mnop = create_dropdown(df, COL_MODEL_NAME_OR_PATH)
-                ng = create_dropdown(df, COL_NUM_GPUS)
-                fc = create_dropdown(df, COL_FRAMEWORK_CONFIG)
-                pm = create_dropdown(df, COL_PEFT_METHOD)
-
-
-            with gr.Column():
-                chart = gr.Dropdown(
-                    choices=[
-                        COL_TRAIN_TOKENS_PER_SEC
-                    ],
-                    value=COL_TRAIN_TOKENS_PER_SEC,
-                    label="Graph",
-                )
-                bar1 = gr.BarPlot()
-        dataframe = gr.Dataframe(
-            label="Benchmark Results", 
-            value=df,
-            interactive=False
-        )
-        btn = gr.Button('Display')
-        btn.click(
-            fn=update, 
-            inputs=[mnop, ng, fc, pm, chart], 
-            outputs=[dataframe, bar1]
-        )
-        demo.load(
-            fn=update, 
-            inputs=[mnop, ng, fc, pm, chart], 
-            outputs=[dataframe, bar1]
-        )
-
+if __name__ == "__main__":
     demo.launch(
         server_name=args.server_name, 
         server_port=args.port
