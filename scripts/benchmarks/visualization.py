@@ -8,10 +8,11 @@ from scripts.benchmarks.benchmark import (
     RESULT_FIELD_RESERVED_GPU_MEM as _RESULT_FIELD_RESERVED_GPU_MEM,
 )
 
-_RESULT_FIELD_TRAIN_TOKENS_PER_SEC = 'train_tokens_per_second'
-
 from typing import List, Dict
 import argparse
+from functools import partial
+
+_RESULT_FIELD_TRAIN_TOKENS_PER_SEC = 'train_tokens_per_second'
 
 COL_TORCH_ALLOC_MEM = 'mem_alloc'
 COL_TORCH_PEAK_MEM = 'mem_peak'
@@ -32,6 +33,7 @@ COL_RENAMES = {
 }
 
 COL_FORMAT = {
+    COL_TRAIN_TOKENS_PER_SEC: lambda x: round(x) if not pd.isna(x) else x,
     COL_TRAIN_LOSS: lambda x: round(x, 2),
     COL_TORCH_ALLOC_MEM: lambda x: round(x / 1024 ** 2),
     COL_TORCH_PEAK_MEM: lambda x: round(x / 1024 ** 2),
@@ -50,18 +52,18 @@ DEFAULT_VALS = {
     COL_PEFT_METHOD: 'none'
 }
 
+DEFAULT_TOOLTIP = [
+    COL_MODEL_NAME_OR_PATH,
+    COL_FRAMEWORK_CONFIG,
+    COL_PEFT_METHOD,
+]
+
 METRIC_RANK = 'rank'
 BARPLOT_1 = {
     'x': METRIC_RANK,
     'color': COL_FRAMEWORK_CONFIG,
     'group': COL_NUM_GPUS,
     'group_title': COL_NUM_GPUS,
-    'tooltip': [
-        COL_MODEL_NAME_OR_PATH,
-        COL_FRAMEWORK_CONFIG,
-        COL_PEFT_METHOD,
-        COL_TRAIN_TOKENS_PER_SEC,
-    ],
     'vertical': False,
 }
 def FORMAT_1(df: pd.DataFrame, chart: str):
@@ -77,24 +79,17 @@ BARPLOT_2 = {
     'x': COL_NUM_GPUS,
     'color': COL_FRAMEWORK_CONFIG,
     'group': METRIC_RANK,
-    'title': COL_TORCH_PEAK_MEM,
     'group_title': METRIC_RANK,
-    'tooltip': [
-        COL_MODEL_NAME_OR_PATH,
-        COL_FRAMEWORK_CONFIG,
-        COL_PEFT_METHOD,
-        COL_TORCH_PEAK_MEM,
-    ],
     'vertical': False,
 }
 
-def FORMAT_2(df: pd.DataFrame, chart: str):
+def FORMAT_2(df: pd.DataFrame, chart: str, ascending: bool = True):
     A = df.groupby([
         COL_MODEL_NAME_OR_PATH, COL_FRAMEWORK_CONFIG, COL_PEFT_METHOD
     ])[chart].max().to_frame()
-    # A= A.loc[A[chart] > 0] # take out those wtih zerw
+    A= A.loc[A[chart] > 0] # take out those wtih zerw
     A[METRIC_RANK] = A.rank(
-        method='first', ascending=False
+        method='first', ascending=ascending
     )
     return df.set_index(MAIN_COLUMNS).join(
         A.drop(chart, axis=1), 
@@ -103,13 +98,13 @@ def FORMAT_2(df: pd.DataFrame, chart: str):
     ).reset_index()
 
 CHARTS = {
-    COL_TRAIN_TOKENS_PER_SEC: BARPLOT_1,
+    COL_TRAIN_TOKENS_PER_SEC: BARPLOT_2, 
     COL_TORCH_PEAK_MEM: BARPLOT_2,
     COL_TORCH_ALLOC_MEM: BARPLOT_2,
 }
 
 FUNCS = {
-    COL_TRAIN_TOKENS_PER_SEC: FORMAT_1,
+    COL_TRAIN_TOKENS_PER_SEC: partial(FORMAT_2, ascending=False),
     COL_TORCH_PEAK_MEM: FORMAT_2,
     COL_TORCH_ALLOC_MEM: FORMAT_2,
 }
@@ -139,10 +134,9 @@ def fetch_data(
         df.loc[df[k].isna(), k]  = default
     return df
 
-# def handle_duplicates(df: pd.DataFrame, columns: List[str]):
-#     return df.drop_duplicates(columns)
-
 # for now handle by max
+# - for metrics where higher is better, this is best case
+# - otherwise this is worst case
 def handle_duplicates(
     df: pd.DataFrame, columns: List[str],
     target_column: str, 
@@ -226,6 +220,9 @@ def update(
         FUNCS[chart](_df, chart), 
         y=chart, label=chart,
         **CHARTS[chart],
+        tooltip=[
+            *DEFAULT_TOOLTIP, chart
+        ]
     )
 
 refresh_data()
