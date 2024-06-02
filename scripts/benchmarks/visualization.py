@@ -101,12 +101,14 @@ CHARTS = {
     COL_TRAIN_TOKENS_PER_SEC: BARPLOT_2, 
     COL_TORCH_PEAK_MEM: BARPLOT_2,
     COL_TORCH_ALLOC_MEM: BARPLOT_2,
+    COL_TRAIN_LOSS: BARPLOT_2,
 }
 
 FUNCS = {
     COL_TRAIN_TOKENS_PER_SEC: partial(FORMAT_2, ascending=False),
     COL_TORCH_PEAK_MEM: FORMAT_2,
     COL_TORCH_ALLOC_MEM: FORMAT_2,
+    COL_TRAIN_LOSS: FORMAT_2,
 }
 
 def fetch_data(
@@ -240,6 +242,7 @@ with gr.Blocks() as demo:
                     COL_TRAIN_TOKENS_PER_SEC,
                     COL_TORCH_PEAK_MEM,
                     COL_TORCH_ALLOC_MEM,
+                    COL_TRAIN_LOSS,
                 ],
                 value=COL_TRAIN_TOKENS_PER_SEC,
                 label="Graph",
