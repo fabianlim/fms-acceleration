@@ -142,11 +142,20 @@ def fetch_data(
 def handle_duplicates(
     df: pd.DataFrame, columns: List[str],
     target_column: str, 
+    reduce: str = 'max'
 ):
     DFS = []
     for _, A in df.groupby(columns):
-        ind = A[target_column].to_numpy().argmax() # by max now
-        DFS.append(A.iloc[ind:ind+1]) # to get a dataframe
+        if reduce == 'max':
+            ind = A[target_column].to_numpy().argmax() # by max now
+            DFS.append(A.iloc[ind:ind+1]) # to get a dataframe
+        elif reduce == 'min':
+            ind = A[target_column].to_numpy().argmin() # by max now
+            DFS.append(A.iloc[ind:ind+1]) # to get a dataframe
+        elif reduce == 'mean':
+            row = A.iloc[0:1]
+            row[target_column] = A[target_column].mean()
+            DFS.append(row)
     return pd.concat(DFS).sort_index()
 
 def create_dropdown(df: pd.DataFrame, column_name: str):
@@ -207,10 +216,11 @@ def update(
     framework_config: str,
     peft_method: str,
     chart: str,
+    reduce: str
 ):
 
     # dedupe the rows by MAIN_COLUMNS
-    _df = handle_duplicates(df, MAIN_COLUMNS, chart)
+    _df = handle_duplicates(df, MAIN_COLUMNS, chart, reduce)
 
     # select
     _df = select_data(_df, COL_MODEL_NAME_OR_PATH, model_name_or_path)
@@ -237,16 +247,26 @@ with gr.Blocks() as demo:
             pm = create_dropdown(df, COL_PEFT_METHOD)
 
         with gr.Column():
-            chart = gr.Dropdown(
-                choices=[
-                    COL_TRAIN_TOKENS_PER_SEC,
-                    COL_TORCH_PEAK_MEM,
-                    COL_TORCH_ALLOC_MEM,
-                    COL_TRAIN_LOSS,
-                ],
-                value=COL_TRAIN_TOKENS_PER_SEC,
-                label="Graph",
-            )
+            with gr.Row():
+                reduce = gr.Radio(
+                    choices=[
+                        'max', 'min', 'mean',
+                    ],
+                    value='max',
+                    label='reduction',
+                    info='reduction across hyperparams (e.g. batch size)'
+                )
+                chart = gr.Dropdown(
+                    choices=[
+                        COL_TRAIN_TOKENS_PER_SEC,
+                        COL_TORCH_PEAK_MEM,
+                        COL_TORCH_ALLOC_MEM,
+                        COL_TRAIN_LOSS,
+                    ],
+                    value=COL_TRAIN_TOKENS_PER_SEC,
+                    label="metric",
+                    info='reduce and plot against this metric',
+                )
             bar1 = gr.BarPlot()
     dataframe = gr.Dataframe(
         label="Benchmark Results", 
@@ -256,12 +276,12 @@ with gr.Blocks() as demo:
     btn = gr.Button('Display')
     btn.click(
         fn=update, 
-        inputs=[mnop, ng, fc, pm, chart], 
+        inputs=[mnop, ng, fc, pm, chart, reduce], 
         outputs=[dataframe, bar1]
     )
     demo.load(
         fn=update, 
-        inputs=[mnop, ng, fc, pm, chart], 
+        inputs=[mnop, ng, fc, pm, chart, reduce], 
         outputs=[dataframe, bar1]
     )
 
